@@ -1,0 +1,13 @@
+{
+  "name": "claude-session-map",
+  "description": "A live map of a Claude Code session: goal, milestones and side tasks",
+  "owner": {
+    "name": "avaver"
+  },
+  "plugins": [
+    {
+      "name": "session-map",
+      "source": "./"
+    }
+  ]
+}

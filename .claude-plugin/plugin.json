@@ -1,0 +1,9 @@
+{
+  "name": "session-map",
+  "version": "0.1.0",
+  "description": "A live map of the session: the goal as it evolves, milestones, and the side tasks it branched into",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "avaver"
+  }
+}
