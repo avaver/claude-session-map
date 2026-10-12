@@ -1,4 +1,4 @@
-import type { On } from 'claude-code'
+import type { CommandRunArgs, On, UiOpenResult } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { EMPTY, apply, rows, statusLine, toText } from '../hooks/map'
@@ -16,7 +16,7 @@ const run = (...changes: Update[]): SessionMap =>
   }, EMPTY)
 
 /** The engine beneath the plugin: what a session answers, from memory. */
-const world = (on: On, stored?: Record<string, unknown>) => {
+const world = (on: On, stored?: Record<string, unknown>, opening: UiOpenResult = { isPlaced: true }) => {
   mock.clock(on, { now: 1000 })
   mock.store(on, stored)
   const status: (string | undefined)[] = []
@@ -28,7 +28,7 @@ const world = (on: On, stored?: Record<string, unknown>) => {
   on('ui.open', ($, e) => {
     opened.push(e.id)
 
-    return { value: { isPlaced: true } }
+    return { value: opening }
   })
   on('ui.status', ($, e) => {
     status.push(e.text)
@@ -216,6 +216,22 @@ test('the newest update call draws the whole map in the transcript, on the phone
     expect(await older.find({ type: 'Text', text: /Phone goal/ })).toBe(undefined)
     await older.unmount()
   }
+})
+
+test('the command says why the pane is not shown', async ($, on) => {
+  world(on, undefined, { isPlaced: false, reason: 'the attached desktop places no panes' })
+  const ran = await $.command.run({ command: 'session-map', args: '' })
+  expect(ran.text).toBe('Session map is open but not shown: the attached desktop places no panes')
+})
+
+test('the command says where the pane went on the main screen', async ($, on) => {
+  world(on)
+  const run = (isFullscreen: boolean) =>
+    $.command.run({ command: 'session-map', args: '', presentation: { isFullscreen, columns: 120 } } as CommandRunArgs)
+  const inline = await run(false)
+  expect(inline.text).toContain('above the prompt')
+  expect(inline.text).toContain('/tui fullscreen')
+  expect((await run(true)).text).toBe('Session map opened.')
 })
 
 test('the pane draws on the phone and in VS Code as well', async ($, on) => {

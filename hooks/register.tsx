@@ -169,7 +169,11 @@ export const register: Register = on => {
     }
     if (arg === 'text') return { text: toText(await read($, mapAtom)) }
     await update($, isHidden, () => false)
-    await $.ui.open({ id: PANE, title: TITLE })
+    const opened = await $.ui.open({ id: PANE, title: TITLE })
+    if (!opened.isPlaced) return { text: `Session map is open but not shown: ${opened.reason}` }
+    if (e.presentation?.isFullscreen === false) {
+      return { text: 'Session map opened above the prompt. `/tui fullscreen` docks it beside the transcript.' }
+    }
 
     return { text: 'Session map opened.' }
   })
