@@ -218,6 +218,23 @@ test('the newest update call draws the whole map in the transcript, on the phone
   }
 })
 
+test('a long title wraps beside the tree guide, not under it', async ($, on) => {
+  world(on)
+  await $.tool.call({ tool: TOOL, action: 'goal', text: 'G' })
+  await $.tool.call({ tool: TOOL, action: 'branch', text: 'side task' })
+  await $.tool.call({ tool: TOOL, action: 'step', text: 'a step long enough to wrap in a narrow pane' })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'session-map', surface, ...PANE })
+    const guide = await ui.find({ type: 'Box', key: 'guide-n2' })
+    expect(guide?.text).toBe('  └ ✓ ')
+    expect(guide?.props.flexShrink).toBe(0)
+    const title = await ui.find({ type: 'Box', key: 'title-n2' })
+    expect(title?.text).toBe('a step long enough to wrap in a narrow pane')
+    expect(title?.props.flexShrink).toBe(1)
+    await ui.unmount()
+  }
+})
+
 test('the command says why the pane is not shown', async ($, on) => {
   world(on, undefined, { isPlaced: false, reason: 'the attached desktop places no panes' })
   const ran = await $.command.run({ command: 'session-map', args: '' })

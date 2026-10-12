@@ -233,21 +233,30 @@ const drawMap = ({ Box, Text }: Drawing, map: SessionMap, { isFull }: { isFull: 
         const { node } = row
         const isBranch = node.kind === 'branch'
 
+        // The guide is its own column so a wrapped title stays under itself instead of the tree.
         return (
-          <Text>
-            <Text dimColor>{row.guide}</Text>
-            <Text color={COLOR[node.status]}>{ICON[node.status]} </Text>
-            <Text
-              bold={row.isCurrent}
-              dimColor={node.status === 'planned' || node.status === 'dropped'}
-              strikethrough={node.status === 'dropped'}
-              color={isBranch ? 'suggestion' : undefined}
-            >
-              {isBranch ? `↳ ${node.title}` : node.title}
-            </Text>
-            {node.outcome !== undefined && <Text dimColor> → {node.outcome}</Text>}
-            {row.isCurrent && <Text color="claude"> ← зараз</Text>}
-          </Text>
+          <Box key={`row-${row.id}`} flexDirection="row">
+            <Box key={`guide-${row.id}`} flexShrink={0}>
+              <Text>
+                <Text dimColor>{row.guide}</Text>
+                <Text color={COLOR[node.status]}>{ICON[node.status]} </Text>
+              </Text>
+            </Box>
+            <Box key={`title-${row.id}`} flexShrink={1}>
+              <Text>
+                <Text
+                  bold={row.isCurrent}
+                  dimColor={node.status === 'planned' || node.status === 'dropped'}
+                  strikethrough={node.status === 'dropped'}
+                  color={isBranch ? 'suggestion' : undefined}
+                >
+                  {isBranch ? `↳ ${node.title}` : node.title}
+                </Text>
+                {node.outcome !== undefined && <Text dimColor> → {node.outcome}</Text>}
+                {row.isCurrent && <Text color="claude"> ← зараз</Text>}
+              </Text>
+            </Box>
+          </Box>
         )
       })}
       {isFull && <Text> </Text>}
