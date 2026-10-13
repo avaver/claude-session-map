@@ -82,6 +82,9 @@ test('a new topic keeps its own steps, and naming an earlier one returns to it',
   expect(statusLine(map)).toBe('◎ Bug 1 · ↳ flaky test')
   const [release] = map.topics.filter(one => one.id === 't2')
   expect(release && summary(map, release)).toEqual({ icon: '✓', text: 'Release check · 1 ✓' })
+  const open = run({ action: 'goal', text: 'Open' }, { action: 'step', text: 'later', status: 'planned' }, { action: 'topic', text: 'Next' })
+  const [first] = open.topics
+  expect(first && summary(open, first)).toEqual({ icon: '◐', text: 'Open · 1 ○' })
 })
 
 test('the text shows the current topic in full and earlier ones in a line, all of them in full on request', () => {

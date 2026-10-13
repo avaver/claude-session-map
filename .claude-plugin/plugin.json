@@ -1,6 +1,6 @@
 {
   "name": "session-map",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A live map of the session: its topics, the milestones in each, and the side tasks they branched into",
   "types": "./types/index.d.ts",
   "author": {

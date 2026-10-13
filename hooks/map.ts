@@ -194,6 +194,9 @@ export const rows = (map: SessionMap, topic: string | null = map.current): Row[]
   return out
 }
 
+/** An earlier topic that still has planned steps: `○` would read as not started. */
+const HAS_OPEN = '◐'
+
 /** Topics other than the current one, the latest first. */
 export const earlierTopics = (map: SessionMap) => map.topics.filter(one => one.id !== map.current).reverse()
 
@@ -201,7 +204,7 @@ export const earlierTopics = (map: SessionMap) => map.topics.filter(one => one.i
 export const summary = (map: SessionMap, topic: Topic) => {
   const nodes = map.nodes.filter(one => one.topic === topic.id)
   const count = (status: NodeStatus) => nodes.filter(one => one.status === status).length
-  const icon = count('active') > 0 ? ICON.active : count('planned') > 0 ? ICON.planned : ICON.done
+  const icon = count('active') > 0 ? ICON.active : count('planned') > 0 ? HAS_OPEN : ICON.done
   const counts = (['done', 'active', 'planned', 'dropped'] as const)
     .filter(status => count(status) > 0)
     .map(status => `${count(status)} ${ICON[status]}`)
