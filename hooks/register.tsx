@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register, UiOpenResult } from 'claude-code'
 
 import type { NodeStatus, SessionMap } from '../types'
-import { EMPTY, ICON, apply, describe, goal, rows, statusLine, toText } from './map'
+import { EMPTY, ICON, apply, currentTopic, describe, earlierTopics, goal, migrate, rows, statusLine, summary, toText } from './map'
 import type { Update } from './map'
 
 const PANE = 'session-map'
@@ -22,19 +22,20 @@ const calls = atom({ plugin: 'session-map', key: 'calls' } as const, {})
 /** Update calls whose line the transcript keeps. */
 const KEEP_CALLS = 200
 
-const DESCRIPTION = `Updates the session map the person watches in a side pane: the goal, the milestones reached, and the side tasks work branched into. One action per call:
-- goal: set the goal (text) once it is clear; call again with the new wording when the person changes or extends it.
+const DESCRIPTION = `Updates the session map the person watches in a side pane: the topics of the session, the milestones reached in each, and the side tasks work branched into. One action per call:
+- topic: start a new topic (text) when the person moves to a different task: another bug, work item or request. Steps already recorded stay under the topic they belong to. Naming an earlier topic's title returns to it.
+- goal: reword the current topic (text) when the same task is clarified or extended. Sets the first topic when there is none yet.
 - plan: lay out the steps still ahead (items), shown as planned.
 - step: record a milestone (text). status "done" (default) when it finished, "active" when work on it starts (the branch's previous active step becomes done), "dropped" when abandoned. A step whose title matches a planned one updates it.
-- branch: open a side task (text) the goal does not need by itself: a failing unrelated test, a tooling problem, a side question. Later steps go into it.
+- branch: open a side task (text) the topic does not need by itself: a failing unrelated test, a tooling problem, a side question. Later steps go into it.
 - return: close the current side task, status "done" (default) or "dropped", text = how it ended. Work goes back to where it branched from.
 Titles are a few words in the language the person writes in. Answers with the map as it now stands.`
 
 const INPUT_SCHEMA = {
   type: 'object',
   properties: {
-    action: { type: 'string', enum: ['goal', 'plan', 'step', 'branch', 'return'] },
-    text: { type: 'string', description: 'The goal, step or side task; for return, how it ended.' },
+    action: { type: 'string', enum: ['topic', 'goal', 'plan', 'step', 'branch', 'return'] },
+    text: { type: 'string', description: 'The topic, goal wording, step or side task; for return, how it ended.' },
     items: { type: 'array', items: { type: 'string' }, description: 'plan: the steps ahead, in order.' },
     status: { type: 'string', enum: ['done', 'active', 'planned', 'dropped'] },
   },
@@ -44,21 +45,18 @@ const INPUT_SCHEMA = {
 const GUIDE = `# Session map
 
 The person follows this session through a map drawn from the \`${TOOL}\` tool. Keep it current for any task longer than a couple of steps:
-- Once the goal is clear, set it (action goal). When the person changes or extends it, set it again with the new wording.
-- Record milestones as they finish (step), not every tool call: a handful per goal. When you know the steps ahead, lay them out with plan.
-- When you divert into something the goal does not need by itself (an unrelated failing test, a tooling problem, a side question from the person), open a branch, and return when it ends, saying how it ended.
+- Once the task is clear, set it (action goal). When the person clarifies or extends the same task, reword it (goal again).
+- When the person moves to a different task (another bug, work item or request), start a new topic (action topic), even when it grew out of the previous one. Coming back to an earlier task: topic with its title.
+- Record milestones as they finish (step), not every tool call: a handful per topic. When you know the steps ahead, lay them out with plan.
+- When you divert into something the topic does not need by itself (an unrelated failing test, a tooling problem, a side question from the person), open a branch, and return when it ends, saying how it ended.
 - Titles are a few words in the person's language. Do not narrate the map in your replies: the person sees it.
 Skip it for a single question or a one-step change.`
 
-const NUDGE = `session-map: ${NUDGE_EVERY} tool calls since the session map last changed. If a milestone finished, the goal shifted, or work went into a side task, record it with ${TOOL}; otherwise carry on.`
+const NUDGE = `session-map: ${NUDGE_EVERY} tool calls since the session map last changed. If a milestone finished, the task changed, or work went into a side task, record it with ${TOOL}; otherwise carry on.`
 
-const isMap = (value: unknown): value is SessionMap =>
-  typeof value === 'object' &&
-  value !== null &&
-  Array.isArray((value as SessionMap).goals) &&
-  Array.isArray((value as SessionMap).nodes)
+const readMap = async ($: EngineInterface) => migrate(await read($, mapAtom)) ?? EMPTY
 
-const isEmpty = (map: SessionMap) => map.goals.length === 0 && map.nodes.length === 0
+const isEmpty = (map: SessionMap) => map.topics.length === 0 && map.nodes.length === 0
 
 /** Keeps the map past the session, so a resumed session draws it again. */
 const save = async ($: EngineInterface, map: SessionMap) => {
@@ -100,10 +98,11 @@ export const register: Register = on => {
       description: 'Open the session map pane; `text` prints it, `reset` clears it',
       argumentHint: '[text | reset]',
     })
-    let map = await read($, mapAtom)
+    let map = await readMap($)
     if (isEmpty(map)) {
       const kept = await $.store.get(`s:${await $.session.id()}`)
-      if (isMap(kept) && !isEmpty(kept)) map = await update($, mapAtom, () => kept)
+      const restored = migrate(kept)
+      if (restored && !isEmpty(restored)) map = await update($, mapAtom, () => restored)
     }
     void show($, map)
 
@@ -129,7 +128,8 @@ export const register: Register = on => {
     const now = await $.clock.now()
     let failure: string | undefined
     let line = ''
-    const map = await update($, mapAtom, current => {
+    const map = await update($, mapAtom, stored => {
+      const current = migrate(stored) ?? EMPTY
       const out = apply(current, change, now)
       if ('error' in out) {
         failure = out.error
@@ -177,7 +177,7 @@ export const register: Register = on => {
 
       return { text: 'Session map cleared.' }
     }
-    if (arg === 'text') return { text: toText(await read($, mapAtom)) }
+    if (arg === 'text') return { text: toText(await readMap($), { isFull: true }) }
     await update($, isHidden, () => false)
     const opened = await $.ui.open({ id: PANE, title: TITLE })
     if (!opened.isPlaced) return { text: `Session map is open but not shown: ${opened.reason}` }
@@ -195,7 +195,7 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
-    drawMap($.ui.resolve(e), await read($, mapAtom)),
+    drawMap($.ui.resolve(e), await readMap($)),
   )
 
   // The transcript draws one line per update; the whole map lives in the pane and in `/session-map text`.
@@ -210,7 +210,7 @@ export const register: Register = on => {
 
 type Drawing = Pick<Elements['terminal'], 'Box' | 'Text'>
 
-/** The map as a tree of elements: the goal, its earlier wordings, the steps and side tasks. */
+/** The map as elements: the current topic in full, with its earlier wordings, then the earlier topics in a line each. */
 const drawMap = ({ Box, Text }: Drawing, map: SessionMap) => {
   if (isEmpty(map)) {
     return (
@@ -222,19 +222,22 @@ const drawMap = ({ Box, Text }: Drawing, map: SessionMap) => {
   }
 
   const head = goal(map)
-  const earlier = map.goals.slice(0, -1).slice(-3)
-  const count = (status: NodeStatus) => map.nodes.filter(one => one.status === status).length
+  const wordings = currentTopic(map)?.wordings ?? []
+  const reworded = wordings.slice(0, -1).slice(-3)
+  const nodes = map.nodes.filter(one => one.topic === map.current)
+  const count = (status: NodeStatus) => nodes.filter(one => one.status === status).length
+  const earlier = earlierTopics(map)
 
   return (
     <Box flexDirection="column">
       <Text bold>◎ {head ?? 'Ціль ще не задана'}</Text>
-      {earlier.map(one => (
+      {reworded.map(one => (
         <Text dimColor strikethrough>
           {'  '}
           {one.text}
         </Text>
       ))}
-      {map.goals.length > 1 && <Text dimColor> ціль змінювалась {map.goals.length - 1}×</Text>}
+      {wordings.length > 1 && <Text dimColor> ціль змінювалась {wordings.length - 1}×</Text>}
       <Text> </Text>
       {rows(map).map(row => {
         const { node } = row
@@ -271,6 +274,17 @@ const drawMap = ({ Box, Text }: Drawing, map: SessionMap) => {
         ✓ {count('done')} · ▶ {count('active')} · ○ {count('planned')}
         {count('dropped') > 0 ? ` · ✗ ${count('dropped')}` : ''}
       </Text>
+      {earlier.length > 0 && <Text> </Text>}
+      {earlier.length > 0 && <Text dimColor>Раніше</Text>}
+      {earlier.map(one => {
+        const line = summary(map, one)
+
+        return (
+          <Text key={`topic-${one.id}`} dimColor>
+            {line.icon} {line.text}
+          </Text>
+        )
+      })}
     </Box>
   )
 }

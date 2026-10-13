@@ -1,7 +1,7 @@
 import type { CommandRunArgs, On, UiOpenResult } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { EMPTY, apply, rows, statusLine, toText } from '../hooks/map'
+import { EMPTY, apply, currentTopic, migrate, rows, statusLine, summary, toText } from '../hooks/map'
 import type { Update } from '../hooks/map'
 import type { SessionMap } from '../types'
 
@@ -58,10 +58,68 @@ test('a goal that is reworded keeps its history', () => {
     { action: 'goal', text: 'migrate  auth to oauth' },
     { action: 'goal', text: 'Migrate auth to OAuth and drop sessions' },
   )
-  expect(map.goals.map(one => one.text)).toEqual([
+  expect(map.topics.length).toBe(1)
+  expect(currentTopic(map)?.wordings.map(one => one.text)).toEqual([
     'Migrate auth to OAuth',
     'Migrate auth to OAuth and drop sessions',
   ])
+})
+
+test('a new topic keeps its own steps, and naming an earlier one returns to it', () => {
+  const map = run(
+    { action: 'goal', text: 'Bug 1' },
+    { action: 'step', text: 'fix' },
+    { action: 'branch', text: 'flaky test' },
+    { action: 'topic', text: 'Release check' },
+    { action: 'step', text: 'logs' },
+    { action: 'topic', text: 'bug 1' },
+    { action: 'step', text: 'PR', status: 'active' },
+  )
+  expect(map.topics.map(one => one.wordings.map(w => w.text).join('/'))).toEqual(['Bug 1', 'Release check'])
+  expect(currentTopic(map)?.id).toBe('t1')
+  expect(rows(map).map(row => row.node.title)).toEqual(['fix', 'flaky test', 'PR'])
+  expect(rows(map, 't2').map(row => row.node.title)).toEqual(['logs'])
+  expect(statusLine(map)).toBe('◎ Bug 1 · ↳ flaky test')
+  const [release] = map.topics.filter(one => one.id === 't2')
+  expect(release && summary(map, release)).toEqual({ icon: '✓', text: 'Release check · 1 ✓' })
+})
+
+test('the text shows the current topic in full and earlier ones in a line, all of them in full on request', () => {
+  const map = run(
+    { action: 'goal', text: 'Old task' },
+    { action: 'step', text: 'old step' },
+    { action: 'topic', text: 'New task' },
+    { action: 'step', text: 'new step', status: 'active' },
+  )
+  const short = toText(map)
+  expect(short).toContain('Goal: New task')
+  expect(short).toContain('▶ new step   ← now')
+  expect(short).toContain('✓ Old task · 1 ✓')
+  expect(short).not.toContain('old step')
+  expect(toText(map, { isFull: true })).toContain('  └ ✓ old step')
+})
+
+test('a map kept before topics is split into topics by when each step was recorded', () => {
+  const legacy = {
+    goals: [
+      { text: 'First', at: 0 },
+      { text: 'first, reworded', at: 5 },
+      { text: 'Second', at: 10 },
+    ],
+    nodes: [
+      { id: 'n1', kind: 'step', title: 'a', status: 'done', parent: null, at: 1 },
+      { id: 'n2', kind: 'branch', title: 'side', status: 'active', parent: null, at: 11 },
+      { id: 'n3', kind: 'step', title: 'b', status: 'active', parent: 'n2', at: 3 },
+    ],
+    cursor: 'n2',
+  }
+  const map = migrate(legacy)
+  expect(map?.topics.map(one => one.wordings.map(w => w.text))).toEqual([['First'], ['first, reworded', 'Second']])
+  expect(map?.current).toBe('t3')
+  expect(map?.nodes.map(one => one.topic)).toEqual(['t1', 't3', 't3'])
+  expect(map && statusLine(map)).toBe('◎ Second · ↳ side')
+  expect(migrate(map)).toBe(map)
+  expect(migrate('nonsense')).toBe(undefined)
 })
 
 test('steps fill the plan in place and history reads before it', () => {
@@ -97,7 +155,7 @@ test('a side task branches off and returns to where it left', () => {
     { action: 'return', text: 'lint green' },
     { action: 'step', text: 'second', status: 'active' },
   )
-  expect(map.cursor).toBe(null)
+  expect(currentTopic(map)?.cursor).toBe(null)
   const branch = map.nodes.find(one => one.kind === 'branch')
   expect(branch?.status).toBe('done')
   expect(branch?.outcome).toBe('lint green')
@@ -157,6 +215,40 @@ test('a resumed session draws the map it kept', async ($, on) => {
   const ui = await $.ui.mount({ plugin: 'session-map', surface: 'terminal', ...PANE })
   expect(await ui.find({ type: 'Text', text: /Kept goal/ })).toBeDefined()
   await ui.unmount()
+})
+
+test('the pane draws the current topic in full and earlier topics in a line each', async ($, on) => {
+  world(on)
+  await $.tool.call({ tool: TOOL, action: 'goal', text: 'Old task' })
+  await $.tool.call({ tool: TOOL, action: 'step', text: 'old step' })
+  await $.tool.call({ tool: TOOL, action: 'topic', text: 'New task' })
+  await $.tool.call({ tool: TOOL, action: 'step', text: 'new step', status: 'active' })
+  for (const surface of ['terminal', 'desktop', 'mobile'] as const) {
+    const ui = await $.ui.mount({ plugin: 'session-map', surface, ...PANE })
+    expect(await ui.find({ type: 'Text', text: /◎ New task/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /← зараз/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Раніше' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '✓ Old task · 1 ✓' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /old step/ })).toBe(undefined)
+    await ui.unmount()
+  }
+})
+
+test('a resumed session draws a map kept before topics', async ($, on) => {
+  const legacy = {
+    goals: [{ text: 'Kept from 0.1', at: 0 }],
+    nodes: [{ id: 'n1', kind: 'step', title: 'kept step', status: 'done', parent: null, at: 1 }],
+    cursor: null,
+  }
+  world(on, { 's:test-session': legacy, index: ['test-session'] })
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'session-map', surface: 'terminal', ...PANE })
+  expect(await ui.find({ type: 'Text', text: /Kept from 0.1/ })).toBeDefined()
+  expect(await ui.find({ type: 'Box', key: 'title-n1' })).toBeDefined()
+  await ui.unmount()
+  const next = await $.tool.call({ tool: TOOL, action: 'step', text: 'after resume' })
+  expect(next.result).toContain('✓ kept step')
+  expect(next.result).toContain('✓ after resume')
 })
 
 test('the pane says it is empty before a goal is set', async $ => {

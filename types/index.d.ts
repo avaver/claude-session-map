@@ -5,19 +5,30 @@ export type MapNode = {
   kind: 'step' | 'branch'
   title: string
   status: NodeStatus
-  /** The branch the node sits in; null is the main line. */
+  /** The topic the node was recorded in. */
+  topic: string
+  /** The branch the node sits in; null is the topic's main line. */
   parent: string | null
   /** How a branch ended, given when work returned from it. */
   outcome?: string
   at: number
 }
 
-export type SessionMap = {
-  /** Every wording the goal had, oldest first; the last is the current one. */
-  goals: { text: string; at: number }[]
-  nodes: MapNode[]
-  /** The branch work is in now; null is the main line. */
+/** One task of the session: a bug, a check, a request. */
+export type Topic = {
+  id: string
+  /** Every wording the topic had, oldest first; the last is the current one. Empty until it is named. */
+  wordings: { text: string; at: number }[]
+  /** The branch work is in inside this topic; null is its main line. */
   cursor: string | null
+  at: number
+}
+
+export type SessionMap = {
+  topics: Topic[]
+  /** The topic work is in now. */
+  current: string | null
+  nodes: MapNode[]
 }
 
 declare module 'claude-code' {

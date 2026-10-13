@@ -1,7 +1,7 @@
 {
   "name": "session-map",
-  "version": "0.1.3",
-  "description": "A live map of the session: the goal as it evolves, milestones, and the side tasks it branched into",
+  "version": "0.2.0",
+  "description": "A live map of the session: its topics, the milestones in each, and the side tasks they branched into",
   "types": "./types/index.d.ts",
   "author": {
     "name": "avaver"
