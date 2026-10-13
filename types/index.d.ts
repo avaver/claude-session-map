@@ -22,6 +22,12 @@ export type SessionMap = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'session-map': { map: SessionMap; isHidden: boolean; lastCall: string | null }
+    'session-map': {
+      map: SessionMap
+      isHidden: boolean
+      lastCall: string | null
+      /** The transcript line of each update call, by tool_use_id. */
+      calls: Record<string, string>
+    }
   }
 }

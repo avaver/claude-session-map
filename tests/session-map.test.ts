@@ -202,20 +202,38 @@ const resultRow = (id: string) =>
     props: { tool_use_id: id, tool: TOOL, output: '', isErrored: false },
   }) as const
 
-test('the newest update call draws the whole map in the transcript, on the phone too', async ($, on) => {
+test('each update call draws one line in the transcript: what it changed, never the whole map', async ($, on) => {
   world(on)
   await $.tool.call({ tool: TOOL, tool_use_id: 'call-1', action: 'goal', text: 'Phone goal' })
-  await $.tool.call({ tool: TOOL, tool_use_id: 'call-2', action: 'branch', text: 'side quest' })
-  for (const surface of ['terminal', 'desktop', 'mobile', 'vscode'] as const) {
-    const newest = await $.ui.mount({ plugin: 'session-map', surface, ...resultRow('call-2') })
-    expect(await newest.find({ type: 'Text', text: /Phone goal/ })).toBeDefined()
-    expect(await newest.find({ type: 'Text', text: /↳ side quest/ })).toBeDefined()
-    await newest.unmount()
-    const older = await $.ui.mount({ plugin: 'session-map', surface, ...resultRow('call-1') })
-    expect(await older.find({ type: 'Text', text: /мапу оновлено/ })).toBeDefined()
-    expect(await older.find({ type: 'Text', text: /Phone goal/ })).toBe(undefined)
-    await older.unmount()
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-2', action: 'plan', items: ['Draft', 'Send'] })
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-3', action: 'branch', text: 'side quest' })
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-4', action: 'step', text: 'probe', status: 'active' })
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-5', action: 'return', text: 'found it' })
+  const lines: Record<string, string> = {
+    'call-1': '◎ Phone goal',
+    'call-2': '○ Draft · Send',
+    'call-3': '↳ side quest',
+    'call-4': '▶ probe',
+    'call-5': '↩ side quest → found it',
   }
+  for (const surface of ['terminal', 'desktop', 'mobile', 'vscode'] as const) {
+    for (const [id, line] of Object.entries(lines)) {
+      const row = await $.ui.mount({ plugin: 'session-map', surface, ...resultRow(id) })
+      const text = await row.find({ type: 'Text' })
+      expect(text?.text).toBe(line)
+      expect(text?.props.dimColor).toBe(id !== 'call-5')
+      expect((await row.find({ type: 'Text', text: /Phone goal/ })) !== undefined).toBe(id === 'call-1')
+      await row.unmount()
+    }
+  }
+})
+
+test('a call from before the plugin kept lines still says the map changed', async ($, on) => {
+  world(on)
+  await $.tool.call({ tool: TOOL, tool_use_id: 'call-1', action: 'goal', text: 'G' })
+  const row = await $.ui.mount({ plugin: 'session-map', surface: 'terminal', ...resultRow('unknown') })
+  expect((await row.find({ type: 'Text' }))?.text).toBe('◎ мапу оновлено')
+  await row.unmount()
 })
 
 test('a long title wraps beside the tree guide, not under it', async ($, on) => {

@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register, UiOpenResult } from 'claude-code'
 
 import type { NodeStatus, SessionMap } from '../types'
-import { EMPTY, ICON, apply, goal, rows, statusLine, toText } from './map'
+import { EMPTY, ICON, apply, describe, goal, rows, statusLine, toText } from './map'
 import type { Update } from './map'
 
 const PANE = 'session-map'
@@ -15,8 +15,12 @@ const KEEP = 40
 
 const mapAtom = atom({ plugin: 'session-map', key: 'map' } as const, EMPTY)
 const isHidden = atom({ plugin: 'session-map', key: 'isHidden' } as const, false)
-/** The newest update call, whose result row in the transcript draws the whole map. */
+/** The newest update call, whose result row in the transcript is not dimmed. */
 const lastCall = atom({ plugin: 'session-map', key: 'lastCall' } as const, null)
+/** What each update call changed, by tool_use_id: the one line its result row draws. */
+const calls = atom({ plugin: 'session-map', key: 'calls' } as const, {})
+/** Update calls whose line the transcript keeps. */
+const KEEP_CALLS = 200
 
 const DESCRIPTION = `Updates the session map the person watches in a side pane: the goal, the milestones reached, and the side tasks work branched into. One action per call:
 - goal: set the goal (text) once it is clear; call again with the new wording when the person changes or extends it.
@@ -124,6 +128,7 @@ export const register: Register = on => {
     }
     const now = await $.clock.now()
     let failure: string | undefined
+    let line = ''
     const map = await update($, mapAtom, current => {
       const out = apply(current, change, now)
       if ('error' in out) {
@@ -132,12 +137,17 @@ export const register: Register = on => {
         return current
       }
       failure = undefined
+      line = describe(current, change)
 
       return out.map
     })
     if (failure !== undefined) return { deny: failure }
     sinceUpdate = 0
-    if (e.tool_use_id !== undefined) await update($, lastCall, () => e.tool_use_id ?? null)
+    const id = e.tool_use_id
+    if (id !== undefined) {
+      await update($, lastCall, () => id)
+      await update($, calls, kept => Object.fromEntries([...Object.entries(kept), [id, line]].slice(-KEEP_CALLS)))
+    }
     await save($, map)
     const opened = await show($, map)
     const note =
@@ -185,26 +195,23 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
-    drawMap($.ui.resolve(e), await read($, mapAtom), { isFull: true }),
+    drawMap($.ui.resolve(e), await read($, mapAtom)),
   )
 
-  // The transcript draws the map too, under the newest update call: the one
-  // place every surface shows, the phone included, which seats no side pane.
+  // The transcript draws one line per update; the whole map lives in the pane and in `/session-map text`.
   on('ui.render', { component: 'ToolResult', props: { tool: TOOL } }, async ($, e, next) => {
     if (e.props.isErrored) return next(e)
     const { Text } = $.ui.resolve(e)
-    if ((await read($, lastCall)) !== e.props.tool_use_id) {
-      return <Text dimColor>◎ мапу оновлено</Text>
-    }
+    const line = (await read($, calls))[e.props.tool_use_id] ?? '◎ мапу оновлено'
 
-    return drawMap($.ui.resolve(e), await read($, mapAtom), { isFull: false })
+    return <Text dimColor={(await read($, lastCall)) !== e.props.tool_use_id}>{line}</Text>
   })
 }
 
 type Drawing = Pick<Elements['terminal'], 'Box' | 'Text'>
 
 /** The map as a tree of elements: the goal, its earlier wordings, the steps and side tasks. */
-const drawMap = ({ Box, Text }: Drawing, map: SessionMap, { isFull }: { isFull: boolean }) => {
+const drawMap = ({ Box, Text }: Drawing, map: SessionMap) => {
   if (isEmpty(map)) {
     return (
       <Box flexDirection="column">
@@ -215,7 +222,7 @@ const drawMap = ({ Box, Text }: Drawing, map: SessionMap, { isFull }: { isFull: 
   }
 
   const head = goal(map)
-  const earlier = isFull ? map.goals.slice(0, -1).slice(-3) : []
+  const earlier = map.goals.slice(0, -1).slice(-3)
   const count = (status: NodeStatus) => map.nodes.filter(one => one.status === status).length
 
   return (
@@ -228,7 +235,7 @@ const drawMap = ({ Box, Text }: Drawing, map: SessionMap, { isFull }: { isFull: 
         </Text>
       ))}
       {map.goals.length > 1 && <Text dimColor> ціль змінювалась {map.goals.length - 1}×</Text>}
-      {isFull && <Text> </Text>}
+      <Text> </Text>
       {rows(map).map(row => {
         const { node } = row
         const isBranch = node.kind === 'branch'
@@ -259,13 +266,11 @@ const drawMap = ({ Box, Text }: Drawing, map: SessionMap, { isFull }: { isFull: 
           </Box>
         )
       })}
-      {isFull && <Text> </Text>}
-      {isFull && (
-        <Text dimColor>
-          ✓ {count('done')} · ▶ {count('active')} · ○ {count('planned')}
-          {count('dropped') > 0 ? ` · ✗ ${count('dropped')}` : ''}
-        </Text>
-      )}
+      <Text> </Text>
+      <Text dimColor>
+        ✓ {count('done')} · ▶ {count('active')} · ○ {count('planned')}
+        {count('dropped') > 0 ? ` · ✗ ${count('dropped')}` : ''}
+      </Text>
     </Box>
   )
 }

@@ -157,6 +157,27 @@ export const rows = (map: SessionMap): Row[] => {
 
 export const goal = (map: SessionMap) => map.goals[map.goals.length - 1]?.text
 
+/** One line for the transcript: what `change` did to `before`. */
+export const describe = (before: SessionMap, change: Update) => {
+  const text = clean(change.text)
+
+  switch (change.action) {
+    case 'goal':
+      return `◎ ${text}`
+    case 'plan':
+      return `${ICON.planned} ${(change.items ?? []).map(clean).filter(Boolean).join(' · ')}`
+    case 'step':
+      return `${ICON[change.status ?? 'done']} ${text}`
+    case 'branch':
+      return `↳ ${text}`
+    case 'return': {
+      const title = branchOf(before, before.cursor)?.title ?? ''
+
+      return text ? `↩ ${title} → ${text}` : `↩ ${title}`
+    }
+  }
+}
+
 /** The map as plain text: what the tool answers and what `/session-map text` prints. */
 export const toText = (map: SessionMap) => {
   const head = goal(map)
